@@ -29,13 +29,23 @@ import { gestureService } from '@/services/gesture';
 import { audioService } from '@/services/audio';
 import { exportService } from '@/services/export';
 import { mediapipeService } from '@/services/mediapipe';
+import type { Point, HandLandmarks } from '@/lib/types';
 import { cn } from '@/lib/utils';
+
+interface FloatingEmoji {
+  id: number;
+  emoji: string;
+  x: number;
+  y: number;
+}
 
 export default function HomePage() {
   const [videoReady, setVideoReady] = useState<HTMLVideoElement | null>(null);
   const [showUI, setShowUI] = useState(true);
   const [initTimedOut, setInitTimedOut] = useState(false);
   const [modelError, setModelError] = useState<string | null>(null);
+  const [fingerPosition, setFingerPosition] = useState<Point | null>(null);
+  const [floatingEmojis, setFloatingEmojis] = useState<FloatingEmoji[]>([]);
 
   const { canvasRef, beginStroke, continueStroke, endStroke, clearCanvas, undo, redo, renderFrame } = useCanvas();
   const { processLandmarks, setupDefaultGestures } = useGesture();
@@ -60,15 +70,75 @@ export default function HomePage() {
   const setRecognizedText = useRecognitionStore((s) => s.setRecognizedText);
 
   const isWritingRef = useRef(false);
+  const isGestureWritingRef = useRef(false);
+  const emojiIdRef = useRef(0);
+
+  const canvasActionsRef = useRef({ beginStroke, continueStroke, endStroke });
+  canvasActionsRef.current = { beginStroke, continueStroke, endStroke };
+
+  const spawnEmojis = useCallback((emoji: string, count: number) => {
+    const newEmojis: FloatingEmoji[] = [];
+    for (let i = 0; i < count; i++) {
+      emojiIdRef.current++;
+      newEmojis.push({
+        id: emojiIdRef.current,
+        emoji,
+        x: 10 + Math.random() * 80,
+        y: 60 + Math.random() * 30,
+      });
+    }
+    setFloatingEmojis((prev) => [...prev, ...newEmojis]);
+    setTimeout(() => {
+      setFloatingEmojis((prev) => prev.filter((e) => !newEmojis.find((n) => n.id === e.id)));
+    }, 3000);
+  }, []);
 
   useMediaPipe({
     videoElement: videoReady,
     autoStart: true,
-    onFrame: () => {},
+    onLandmarks: useCallback((landmarks: HandLandmarks | null) => {
+      if (!landmarks) {
+        setFingerPosition(null);
+        if (isGestureWritingRef.current) {
+          const stroke = canvasActionsRef.current.endStroke();
+          if (stroke) {
+            recognitionService.addStroke(stroke);
+          }
+          isGestureWritingRef.current = false;
+        }
+        return;
+      }
+
+      const tip = mediapipeService.getFingerTipPosition(landmarks, true);
+      if (!tip) return;
+
+      const screenPoint: Point = {
+        x: tip.x * window.innerWidth,
+        y: tip.y * window.innerHeight,
+        pressure: tip.pressure ?? 0.5,
+      };
+
+      setFingerPosition(screenPoint);
+
+      const isPinching = mediapipeService.isPinchGesture(landmarks);
+      if (isPinching) {
+        if (!isGestureWritingRef.current) {
+          canvasActionsRef.current.beginStroke(screenPoint);
+          isGestureWritingRef.current = true;
+        } else {
+          canvasActionsRef.current.continueStroke(screenPoint);
+        }
+      } else if (isGestureWritingRef.current) {
+        const stroke = canvasActionsRef.current.endStroke();
+        if (stroke) {
+          recognitionService.addStroke(stroke);
+        }
+        isGestureWritingRef.current = false;
+      }
+    }, []),
     onError: (err) => setModelError(err),
   });
 
-  // Loading timeout: if still loading after 10s, show fallback
   useEffect(() => {
     if (cameraReady && modelLoaded) {
       setInitTimedOut(false);
@@ -186,12 +256,34 @@ export default function HomePage() {
   ]);
 
   useEffect(() => {
+    recognitionService.onRecognition((text) => {
+      setRecognizedText(text);
+    });
     recognitionService.onCelebration((phrase) => {
       setCelebrationPhrase(phrase);
       setIsCelebrating(true);
       addToast({ type: 'success', message: `🎉 ${phrase}!`, duration: 4000 });
+
+      const upper = phrase.toUpperCase();
+      if (upper.includes('HAPPY')) {
+        spawnEmojis('😊', 8);
+      }
+      if (upper.includes('BIRTHDAY')) {
+        spawnEmojis('🎂', 6);
+        setTimeout(() => spawnEmojis('🎉', 10), 500);
+        setTimeout(() => spawnEmojis('🎈', 8), 1000);
+      }
+      if (upper.includes('RAMADAN')) {
+        spawnEmojis('🌙', 8);
+      }
+      if (upper.includes('NEW YEAR')) {
+        spawnEmojis('🎆', 10);
+      }
+      if (upper.includes('CONGRATULATIONS') || upper.includes('WELCOME')) {
+        spawnEmojis('🎉', 8);
+      }
     });
-  }, [setIsCelebrating, setCelebrationPhrase, addToast]);
+  }, [setIsCelebrating, setCelebrationPhrase, addToast, spawnEmojis, setRecognizedText]);
 
   useKeyboard([
     { key: 'z', ctrl: true, handler: handleUndo },
@@ -249,7 +341,7 @@ export default function HomePage() {
         }}
       />
 
-      {/* Splash screen — shown during initial loading */}
+      {/* Splash screen */}
       <AnimatePresence>
         {showSplash && !showFallback && (
           <motion.div
@@ -281,6 +373,23 @@ export default function HomePage() {
             </motion.div>
           </motion.div>
         )}
+      </AnimatePresence>
+
+      {/* Floating emoji celebration */}
+      <AnimatePresence>
+        {floatingEmojis.map((fe) => (
+          <motion.div
+            key={fe.id}
+            initial={{ opacity: 1, y: 0, x: `${fe.x}vw`, scale: 0.5 }}
+            animate={{ opacity: 0, y: -200, scale: 1.5 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 2.5, ease: 'easeOut' }}
+            className="pointer-events-none fixed z-40 text-4xl"
+            style={{ left: `${fe.x}vw`, top: `${fe.y}vh` }}
+          >
+            {fe.emoji}
+          </motion.div>
+        ))}
       </AnimatePresence>
 
       {/* Error / Fallback screen */}
@@ -341,7 +450,7 @@ export default function HomePage() {
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
       >
-        <DrawingCanvas />
+        <DrawingCanvas fingerPosition={fingerPosition} />
       </div>
 
       {/* Recognition overlay */}
@@ -418,8 +527,8 @@ export default function HomePage() {
               <span className="text-[10px] font-medium uppercase tracking-widest text-white/20">
                 {cameraReady && modelLoaded
                   ? isTracking
-                    ? 'Tracking active'
-                    : 'No hand detected'
+                    ? 'Pinch thumb + index finger to write'
+                    : 'Show your hand to camera'
                   : cameraReady && !modelLoaded
                     ? 'AI model loading...'
                     : 'Initializing...'}

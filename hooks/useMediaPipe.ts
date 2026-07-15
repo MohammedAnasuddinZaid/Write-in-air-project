@@ -3,24 +3,25 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { mediapipeService } from '@/services/mediapipe';
 import { useAppStore } from '@/stores/useAppStore';
+import type { HandLandmarks } from '@/lib/types';
 import { logger } from '@/services/logger';
 
 interface UseMediaPipeOptions {
   videoElement: HTMLVideoElement | null;
   autoStart?: boolean;
-  onFrame?: () => void;
+  onLandmarks?: (landmarks: HandLandmarks | null) => void;
   onError?: (error: string) => void;
 }
 
 export function useMediaPipe(options: UseMediaPipeOptions) {
-  const { videoElement, autoStart = true, onFrame, onError } = options;
+  const { videoElement, autoStart = true, onLandmarks, onError } = options;
   const setModelLoaded = useAppStore((s) => s.setModelLoaded);
   const setIsTracking = useAppStore((s) => s.setIsTracking);
   const setStatusMessage = useAppStore((s) => s.setStatusMessage);
   const addToast = useAppStore((s) => s.addToast);
-  const onFrameRef = useRef(onFrame);
+  const onLandmarksRef = useRef(onLandmarks);
   const onErrorRef = useRef(onError);
-  onFrameRef.current = onFrame;
+  onLandmarksRef.current = onLandmarks;
   onErrorRef.current = onError;
 
   const initialize = useCallback(async () => {
@@ -34,7 +35,7 @@ export function useMediaPipe(options: UseMediaPipeOptions) {
         mediapipeService.attachVideo(videoElement);
         mediapipeService.startDetection((landmarks) => {
           setIsTracking(landmarks !== null);
-          onFrameRef.current?.();
+          onLandmarksRef.current?.(landmarks);
         });
       }
       logger.info('MediaPipe initialized');

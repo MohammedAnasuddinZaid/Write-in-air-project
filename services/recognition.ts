@@ -281,6 +281,7 @@ class RecognitionService {
     this.recognizedWords.push(result.text);
     this.pendingText = result.text;
     this.strokes = [];
+    this.onRecognitionEvent?.(result.text);
     logger.info(`Recognized: "${result.text}" (${(result.confidence * 100).toFixed(0)}%)`);
 
     const upperText = result.text.toUpperCase();
@@ -293,9 +294,14 @@ class RecognitionService {
   }
 
   private onCelebrationEvent: ((phrase: string) => void) | null = null;
+  private onRecognitionEvent: ((text: string) => void) | null = null;
 
   onCelebration(callback: (phrase: string) => void): void {
     this.onCelebrationEvent = callback;
+  }
+
+  onRecognition(callback: (text: string) => void): void {
+    this.onRecognitionEvent = callback;
   }
 
   getRecognizedText(): string {
