@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useCallback, useRef } from 'react';
+import { useEffect, useCallback, useRef, type MutableRefObject } from 'react';
 import { motion } from 'framer-motion';
 import { useCanvas } from '@/hooks/useCanvas';
 import { useAppStore } from '@/stores/useAppStore';
@@ -9,40 +9,42 @@ import { cn } from '@/lib/utils';
 
 interface DrawingCanvasProps {
   className?: string;
-  fingerPosition?: Point | null;
+  fingerPosRef?: MutableRefObject<Point | null>;
 }
 
-export function DrawingCanvas({ className, fingerPosition }: DrawingCanvasProps) {
+export function DrawingCanvas({ className, fingerPosRef }: DrawingCanvasProps) {
   const { canvasRef, renderFrame } = useCanvas();
-  const strokes = useAppStore((s) => s.strokes);
-  const isWriting = useAppStore((s) => s.isWriting);
-  const animFrameRef = useRef<number>(0);
   const isCelebrating = useAppStore((s) => s.isCelebrating);
-  const fingerPosRef = useRef<Point | null>(null);
-  fingerPosRef.current = fingerPosition ?? null;
+  const animFrameRef = useRef<number>(0);
 
   const animate = useCallback(() => {
     renderFrame();
-    const ctx = canvasRef.current?.getContext('2d');
-    const fp = fingerPosRef.current;
-    if (ctx && fp) {
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(fp.x, fp.y, 10, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(59, 130, 246, 0.25)';
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(59, 130, 246, 0.7)';
-      ctx.lineWidth = 2;
-      ctx.stroke();
 
-      ctx.beginPath();
-      ctx.arc(fp.x, fp.y, 4, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(59, 130, 246, 0.8)';
-      ctx.fill();
-      ctx.restore();
+    if (fingerPosRef) {
+      const fp = fingerPosRef.current;
+      const ctx = canvasRef.current?.getContext('2d');
+      if (ctx && fp) {
+        ctx.save();
+        ctx.shadowColor = '#FFD700';
+        ctx.shadowBlur = 20;
+        ctx.beginPath();
+        ctx.arc(fp.x, fp.y, 14, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255, 215, 0, 0.15)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255, 215, 0, 0.5)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(fp.x, fp.y, 6, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255, 215, 0, 0.7)';
+        ctx.fill();
+        ctx.restore();
+      }
     }
+
     animFrameRef.current = requestAnimationFrame(animate);
-  }, [renderFrame, canvasRef]);
+  }, [renderFrame, canvasRef, fingerPosRef]);
 
   useEffect(() => {
     animFrameRef.current = requestAnimationFrame(animate);
@@ -53,10 +55,7 @@ export function DrawingCanvas({ className, fingerPosition }: DrawingCanvasProps)
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className={cn(
-        'absolute inset-0 overflow-hidden rounded-2xl',
-        className,
-      )}
+      className={cn('absolute inset-0 overflow-hidden rounded-2xl', className)}
     >
       <canvas
         ref={canvasRef}

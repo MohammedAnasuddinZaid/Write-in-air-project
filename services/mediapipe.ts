@@ -185,6 +185,29 @@ class MediaPipeService {
     return dist < threshold;
   }
 
+  isPointingGesture(landmarks: HandLandmarks): boolean {
+    const tip = landmarks.landmarks[8];
+    const pip = landmarks.landmarks[6];
+    const mcp = landmarks.landmarks[5];
+    const midTip = landmarks.landmarks[12];
+    const midMcp = landmarks.landmarks[9];
+    const ringTip = landmarks.landmarks[16];
+    const ringMcp = landmarks.landmarks[13];
+    const pinkyTip = landmarks.landmarks[20];
+    const pinkyMcp = landmarks.landmarks[17];
+    const thumbTip = landmarks.landmarks[4];
+    const thumbIp = landmarks.landmarks[3];
+    if (!tip || !pip || !mcp || !midTip || !midMcp) return false;
+
+    const indexExtended = tip.y < pip.y && pip.y < mcp.y;
+    const middleCurled = midTip.y > midMcp.y + 0.05;
+    const ringCurled = !ringTip || !ringMcp || ringTip.y > ringMcp.y + 0.05;
+    const pinkyCurled = !pinkyTip || !pinkyMcp || pinkyTip.y > pinkyMcp.y + 0.05;
+    const thumbCurled = !thumbTip || !thumbIp || thumbTip.y > thumbIp.y;
+
+    return indexExtended && middleCurled && ringCurled && pinkyCurled && thumbCurled;
+  }
+
   isOpenPalm(landmarks: HandLandmarks): boolean {
     const tips = [FINGER_TIP_INDEX, MIDDLE_TIP_INDEX, RING_TIP_INDEX, PINKY_TIP_INDEX];
     const wrist = landmarks.landmarks[WRIST_INDEX];

@@ -4,7 +4,7 @@ import { useEffect, useCallback, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Undo2, Redo2, Trash2, Camera, Pen, Hand, Download,
-  RefreshCw, AlertTriangle, CameraOff,
+  RefreshCw, AlertTriangle,
 } from 'lucide-react';
 import { CameraFeed } from '@/components/canvas/CameraFeed';
 import { DrawingCanvas } from '@/components/canvas/DrawingCanvas';
@@ -21,16 +21,16 @@ import { useGesture } from '@/hooks/useGesture';
 import { usePerformance } from '@/hooks/usePerformance';
 import { useKeyboard } from '@/hooks/useKeyboard';
 import { useAppStore } from '@/stores/useAppStore';
-import { useSettingsStore } from '@/stores/useSettingsStore';
 import { useRecognitionStore } from '@/stores/useRecognitionStore';
 import { recognitionService } from '@/services/recognition';
 import { drawingService } from '@/services/drawing';
-import { gestureService } from '@/services/gesture';
 import { audioService } from '@/services/audio';
 import { exportService } from '@/services/export';
 import { mediapipeService } from '@/services/mediapipe';
+import { smoothingFilter } from '@/services/smoothing';
+import { letterRecognizer } from '@/services/letterRecognizer';
 import type { Point, HandLandmarks } from '@/lib/types';
-import { cn } from '@/lib/utils';
+import { SUPPORTED_PHRASES } from '@/lib/constants';
 
 interface FloatingEmoji {
   id: number;
@@ -44,11 +44,10 @@ export default function HomePage() {
   const [showUI, setShowUI] = useState(true);
   const [initTimedOut, setInitTimedOut] = useState(false);
   const [modelError, setModelError] = useState<string | null>(null);
-  const [fingerPosition, setFingerPosition] = useState<Point | null>(null);
   const [floatingEmojis, setFloatingEmojis] = useState<FloatingEmoji[]>([]);
 
   const { canvasRef, beginStroke, continueStroke, endStroke, clearCanvas, undo, redo, renderFrame } = useCanvas();
-  const { processLandmarks, setupDefaultGestures } = useGesture();
+  const { setupDefaultGestures } = useGesture();
   usePerformance();
 
   const cameraReady = useAppStore((s) => s.cameraReady);
@@ -62,15 +61,17 @@ export default function HomePage() {
   const setIsCelebrating = useAppStore((s) => s.setIsCelebrating);
   const setCelebrationPhrase = useAppStore((s) => s.setCelebrationPhrase);
   const performanceMetrics = useAppStore((s) => s.performanceMetrics);
-  const strokes = useAppStore((s) => s.strokes);
 
   const recognizedText = useRecognitionStore((s) => s.recognizedText);
-  const currentWord = useRecognitionStore((s) => s.currentWord);
-  const addResult = useRecognitionStore((s) => s.addResult);
   const setRecognizedText = useRecognitionStore((s) => s.setRecognizedText);
 
-  const isWritingRef = useRef(false);
-  const isGestureWritingRef = useRef(false);
+  const touchWritingRef = useRef(false);
+  const touchStrokeRef = useRef<Point[]>([]);
+  const gestureWritingRef = useRef(false);
+  const accumTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingStrokesRef = useRef<Point[][]>([]);
+  const letterTextRef = useRef('');
+  const fingerPosRef = useRef<Point | null>(null);
   const emojiIdRef = useRef(0);
 
   const canvasActionsRef = useRef({ beginStroke, continueStroke, endStroke });
@@ -84,7 +85,7 @@ export default function HomePage() {
         id: emojiIdRef.current,
         emoji,
         x: 10 + Math.random() * 80,
-        y: 60 + Math.random() * 30,
+        y: 50 + Math.random() * 40,
       });
     }
     setFloatingEmojis((prev) => [...prev, ...newEmojis]);
@@ -93,49 +94,114 @@ export default function HomePage() {
     }, 3000);
   }, []);
 
+  const finishLetterStroke = useCallback((points: Point[]) => {
+    smoothingFilter.reset();
+    if (points.length < 5) return;
+
+    pendingStrokesRef.current.push([...points]);
+
+    if (accumTimerRef.current) clearTimeout(accumTimerRef.current);
+    accumTimerRef.current = setTimeout(() => {
+      const allStrokes = [...pendingStrokesRef.current];
+      pendingStrokesRef.current = [];
+
+      if (allStrokes.length === 0) return;
+
+      const combined: Point[] = [];
+      for (let i = 0; i < allStrokes.length; i++) {
+        if (i > 0) combined.push({ x: -10, y: -10, time: Date.now() });
+        const strokePoints = allStrokes[i];
+        if (strokePoints) combined.push(...strokePoints);
+      }
+
+      const letter = letterRecognizer.recognizeFromStroke(combined);
+      if (letter) {
+        letterTextRef.current += letter;
+        setRecognizedText(letterTextRef.current);
+
+        const fullText = letterTextRef.current.toUpperCase();
+        for (const phrase of SUPPORTED_PHRASES) {
+          if (fullText.includes(phrase)) {
+            letterTextRef.current = '';
+            setCelebrationPhrase(phrase);
+            setIsCelebrating(true);
+            addToast({
+              type: 'success',
+              message: `🎉 ${phrase}!`,
+              duration: 4000,
+            });
+
+            if (phrase.includes('HAPPY')) spawnEmojis('😊', 8);
+            if (phrase.includes('BIRTHDAY')) {
+              spawnEmojis('🎂', 6);
+              setTimeout(() => spawnEmojis('🎉', 10), 500);
+              setTimeout(() => spawnEmojis('🎈', 8), 1000);
+            }
+            if (phrase.includes('RAMADAN')) spawnEmojis('🌙', 8);
+            if (phrase.includes('NEW YEAR')) spawnEmojis('🎆', 10);
+            if (phrase.includes('CONGRATULATIONS') || phrase.includes('WELCOME')) spawnEmojis('🎉', 8);
+            break;
+          }
+        }
+      }
+    }, 300);
+  }, [setRecognizedText, setCelebrationPhrase, setIsCelebrating, addToast, spawnEmojis]);
+
+  const currentStrokeRef = useRef<Point[]>([]);
+
   useMediaPipe({
     videoElement: videoReady,
     autoStart: true,
     onLandmarks: useCallback((landmarks: HandLandmarks | null) => {
       if (!landmarks) {
-        setFingerPosition(null);
-        if (isGestureWritingRef.current) {
+        if (gestureWritingRef.current) {
+          const pts = [...currentStrokeRef.current];
+          currentStrokeRef.current = [];
+          gestureWritingRef.current = false;
           const stroke = canvasActionsRef.current.endStroke();
-          if (stroke) {
-            recognitionService.addStroke(stroke);
-          }
-          isGestureWritingRef.current = false;
+          if (stroke) finishLetterStroke(pts);
         }
+        fingerPosRef.current = null;
         return;
       }
 
+      const pointing = mediapipeService.isPointingGesture(landmarks);
       const tip = mediapipeService.getFingerTipPosition(landmarks, true);
-      if (!tip) return;
-
-      const screenPoint: Point = {
-        x: tip.x * window.innerWidth,
-        y: tip.y * window.innerHeight,
-        pressure: tip.pressure ?? 0.5,
-      };
-
-      setFingerPosition(screenPoint);
-
-      const isPinching = mediapipeService.isPinchGesture(landmarks);
-      if (isPinching) {
-        if (!isGestureWritingRef.current) {
-          canvasActionsRef.current.beginStroke(screenPoint);
-          isGestureWritingRef.current = true;
-        } else {
-          canvasActionsRef.current.continueStroke(screenPoint);
+      if (!tip) {
+        if (gestureWritingRef.current) {
+          const pts = [...currentStrokeRef.current];
+          currentStrokeRef.current = [];
+          gestureWritingRef.current = false;
+          const stroke = canvasActionsRef.current.endStroke();
+          if (stroke) finishLetterStroke(pts);
         }
-      } else if (isGestureWritingRef.current) {
-        const stroke = canvasActionsRef.current.endStroke();
-        if (stroke) {
-          recognitionService.addStroke(stroke);
-        }
-        isGestureWritingRef.current = false;
+        fingerPosRef.current = null;
+        return;
       }
-    }, []),
+
+      const rawX = tip.x * window.innerWidth;
+      const rawY = tip.y * window.innerHeight;
+      const smoothed = smoothingFilter.smooth(rawX, rawY);
+      const sp: Point = { x: smoothed.x, y: smoothed.y, pressure: tip.pressure ?? 0.5, time: Date.now() };
+
+      fingerPosRef.current = sp;
+
+      if (pointing) {
+        currentStrokeRef.current.push(sp);
+        if (!gestureWritingRef.current) {
+          canvasActionsRef.current.beginStroke(sp, { style: 'gold', color: '#FFD700', size: 4, opacity: 0.95, glow: 0.8, pressureSensitivity: true });
+          gestureWritingRef.current = true;
+        } else {
+          canvasActionsRef.current.continueStroke(sp, { style: 'gold', color: '#FFD700', size: 4, opacity: 0.95, glow: 0.8, pressureSensitivity: true });
+        }
+      } else if (gestureWritingRef.current) {
+        const pts = [...currentStrokeRef.current];
+        currentStrokeRef.current = [];
+        gestureWritingRef.current = false;
+        const stroke = canvasActionsRef.current.endStroke();
+        if (stroke) finishLetterStroke(pts);
+      }
+    }, [finishLetterStroke]),
     onError: (err) => setModelError(err),
   });
 
@@ -148,11 +214,7 @@ export default function HomePage() {
       if (!modelLoaded) {
         setInitTimedOut(true);
         setStatusMessage('Camera or AI model loading timed out');
-        addToast({
-          type: 'warning',
-          message: 'Loading timed out. Touch/mouse input still works.',
-          duration: 6000,
-        });
+        addToast({ type: 'warning', message: 'Loading timed out. Touch/mouse input still works.', duration: 6000 });
       }
     }, 10000);
     return () => clearTimeout(timer);
@@ -186,31 +248,26 @@ export default function HomePage() {
     window.location.reload();
   }, [setCameraReady, setStatusMessage]);
 
-  const handleStartWriting = useCallback(() => {
-    isWritingRef.current = true;
-  }, []);
-
-  const handleStopWriting = useCallback(() => {
-    if (isWritingRef.current) {
-      const stroke = endStroke();
-      if (stroke) {
-        recognitionService.addStroke(stroke);
-      }
-      isWritingRef.current = false;
-    }
-  }, [endStroke]);
-
   const handleClear = useCallback(() => {
     clearCanvas();
     drawingService.clear();
+    letterTextRef.current = '';
+    setRecognizedText('');
+    recognitionService.clear();
+    pendingStrokesRef.current = [];
+    if (accumTimerRef.current) clearTimeout(accumTimerRef.current);
     audioService.playClick();
-  }, [clearCanvas]);
+  }, [clearCanvas, setRecognizedText]);
 
   const handleUndo = useCallback(() => {
     undo();
     const removed = drawingService.undo();
-    if (removed) audioService.playClick();
-  }, [undo]);
+    if (removed) {
+      letterTextRef.current = letterTextRef.current.slice(0, -1);
+      setRecognizedText(letterTextRef.current);
+      audioService.playClick();
+    }
+  }, [undo, setRecognizedText]);
 
   const handleRedo = useCallback(() => {
     redo();
@@ -226,8 +283,11 @@ export default function HomePage() {
   const handleReset = useCallback(() => {
     clearCanvas();
     drawingService.clear();
+    letterTextRef.current = '';
     setRecognizedText('');
     recognitionService.clear();
+    pendingStrokesRef.current = [];
+    if (accumTimerRef.current) clearTimeout(accumTimerRef.current);
     setStatusMessage('Reset complete');
     addToast({ type: 'info', message: 'Reset complete', duration: 1500 });
   }, [clearCanvas, setRecognizedText, setStatusMessage, addToast]);
@@ -238,8 +298,6 @@ export default function HomePage() {
 
   useEffect(() => {
     const cleanup = setupDefaultGestures({
-      onStartWriting: handleStartWriting,
-      onStopWriting: handleStopWriting,
       onClear: handleClear,
       onUndo: handleUndo,
       onScreenshot: handleScreenshot,
@@ -248,42 +306,7 @@ export default function HomePage() {
       onPauseRecognition: () => {},
     });
     return cleanup;
-  }, [
-    setupDefaultGestures,
-    handleStartWriting, handleStopWriting,
-    handleClear, handleUndo, handleScreenshot,
-    handleToggleUI, handleReset,
-  ]);
-
-  useEffect(() => {
-    recognitionService.onRecognition((text) => {
-      setRecognizedText(text);
-    });
-    recognitionService.onCelebration((phrase) => {
-      setCelebrationPhrase(phrase);
-      setIsCelebrating(true);
-      addToast({ type: 'success', message: `🎉 ${phrase}!`, duration: 4000 });
-
-      const upper = phrase.toUpperCase();
-      if (upper.includes('HAPPY')) {
-        spawnEmojis('😊', 8);
-      }
-      if (upper.includes('BIRTHDAY')) {
-        spawnEmojis('🎂', 6);
-        setTimeout(() => spawnEmojis('🎉', 10), 500);
-        setTimeout(() => spawnEmojis('🎈', 8), 1000);
-      }
-      if (upper.includes('RAMADAN')) {
-        spawnEmojis('🌙', 8);
-      }
-      if (upper.includes('NEW YEAR')) {
-        spawnEmojis('🎆', 10);
-      }
-      if (upper.includes('CONGRATULATIONS') || upper.includes('WELCOME')) {
-        spawnEmojis('🎉', 8);
-      }
-    });
-  }, [setIsCelebrating, setCelebrationPhrase, addToast, spawnEmojis, setRecognizedText]);
+  }, [setupDefaultGestures, handleClear, handleUndo, handleScreenshot, handleToggleUI, handleReset]);
 
   useKeyboard([
     { key: 'z', ctrl: true, handler: handleUndo },
@@ -301,8 +324,9 @@ export default function HomePage() {
       const rect = (e.target as HTMLElement).getBoundingClientRect();
       const x = touch.clientX - rect.left;
       const y = touch.clientY - rect.top;
-      if (x >= 0 && y >= 0 && x <= window.innerWidth && y <= window.innerHeight) {
-        beginStroke({ x, y, pressure: 0.5 });
+      if (x >= 0 && y >= 0) {
+        beginStroke({ x, y, pressure: 0.5, time: Date.now() }, { style: 'gold', color: '#FFD700', size: 4, opacity: 0.95, glow: 0.8, pressureSensitivity: true });
+        touchWritingRef.current = true;
       }
     },
     [beginStroke],
@@ -311,27 +335,36 @@ export default function HomePage() {
   const handleTouchMove = useCallback(
     (e: React.TouchEvent) => {
       const touch = e.touches[0];
-      if (!touch) return;
+      if (!touch || !touchWritingRef.current) return;
       const rect = (e.target as HTMLElement).getBoundingClientRect();
       const x = touch.clientX - rect.left;
       const y = touch.clientY - rect.top;
-      if (isWritingRef.current) {
-        continueStroke({ x, y, pressure: 0.5 });
-      }
+      const pt: Point = { x, y, pressure: 0.5, time: Date.now() };
+      touchStrokeRef.current.push(pt);
+      continueStroke(pt, { style: 'gold', color: '#FFD700', size: 4, opacity: 0.95, glow: 0.8, pressureSensitivity: true });
     },
     [continueStroke],
   );
 
   const handleTouchEnd = useCallback(() => {
-    handleStopWriting();
-  }, [handleStopWriting]);
+    if (touchWritingRef.current) {
+      touchWritingRef.current = false;
+      const stroke = endStroke();
+      if (stroke) {
+        const pts = [...touchStrokeRef.current];
+        touchStrokeRef.current = [];
+        finishLetterStroke(pts);
+      }
+    }
+  }, [endStroke, finishLetterStroke]);
 
   const showSplash = !cameraReady || (!modelLoaded && !cameraError && !modelError && !initTimedOut);
   const showFallback = (!cameraReady && cameraError) || initTimedOut || modelError;
 
+  const textToShow = letterTextRef.current || recognizedText;
+
   return (
     <main className="relative flex h-screen w-screen flex-col overflow-hidden">
-      {/* Animated background */}
       <div className="absolute inset-0 bg-gradient-to-br from-[#0a0a0f] via-[#12121a] to-[#1a0a2e] dark:from-[#0a0a0f] dark:via-[#12121a] dark:to-[#1a0a2e] light:from-[#f0f4ff] light:via-[#f8fafc] light:to-[#f0f0ff]" />
       <div
         className="absolute inset-0 opacity-30 dark:opacity-20"
@@ -341,7 +374,6 @@ export default function HomePage() {
         }}
       />
 
-      {/* Splash screen */}
       <AnimatePresence>
         {showSplash && !showFallback && (
           <motion.div
@@ -375,7 +407,6 @@ export default function HomePage() {
         )}
       </AnimatePresence>
 
-      {/* Floating emoji celebration */}
       <AnimatePresence>
         {floatingEmojis.map((fe) => (
           <motion.div
@@ -392,7 +423,6 @@ export default function HomePage() {
         ))}
       </AnimatePresence>
 
-      {/* Error / Fallback screen */}
       <AnimatePresence>
         {showFallback && (
           <motion.div
@@ -407,11 +437,7 @@ export default function HomePage() {
               </div>
               <h2 className="text-xl font-bold text-white">Camera Required</h2>
               <p className="text-sm leading-relaxed text-white/60">
-                {cameraError
-                  ? `Camera error: ${cameraError}`
-                  : modelError
-                    ? `AI model unavailable: ${modelError}`
-                    : 'Camera access or AI model loading timed out.'}
+                {cameraError ? `Camera error: ${cameraError}` : modelError ? `AI model unavailable: ${modelError}` : 'Camera access or AI model loading timed out.'}
                 <br />
                 Touch and mouse drawing still works without the camera.
               </p>
@@ -419,17 +445,14 @@ export default function HomePage() {
                 <Button variant="primary" onClick={handleRetryCamera} icon={<RefreshCw className="h-4 w-4" />}>
                   Retry
                 </Button>
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    setCameraReady(true);
-                    setInitTimedOut(false);
-                    setModelError(null);
-                    setCameraError(null);
-                    setStatusMessage('Camera skipped — touch/mouse mode');
-                    addToast({ type: 'info', message: 'Using touch/mouse mode. Camera tracking disabled.', duration: 3000 });
-                  }}
-                >
+                <Button variant="secondary" onClick={() => {
+                  setCameraReady(true);
+                  setInitTimedOut(false);
+                  setModelError(null);
+                  setCameraError(null);
+                  setStatusMessage('Camera skipped — touch/mouse mode');
+                  addToast({ type: 'info', message: 'Using touch/mouse mode. Camera tracking disabled.', duration: 3000 });
+                }}>
                   Continue Without Camera
                 </Button>
               </div>
@@ -438,51 +461,44 @@ export default function HomePage() {
         )}
       </AnimatePresence>
 
-      {/* Camera feed */}
       <div className="absolute right-4 top-16 z-20 sm:right-6 sm:top-20">
         <CameraFeed onVideoReady={onVideoReady} onError={handleCameraError} />
       </div>
 
-      {/* Writing area */}
       <div
         className="absolute inset-0 z-10"
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
       >
-        <DrawingCanvas fingerPosition={fingerPosition} />
+        <DrawingCanvas fingerPosRef={fingerPosRef} />
       </div>
 
-      {/* Recognition overlay */}
-      {recognizedText && (
+      {textToShow && (
         <motion.div
+          key={textToShow}
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           className="absolute bottom-24 left-1/2 z-20 -translate-x-1/2"
         >
-          <GlassPanel blur="xl" opacity="heavy" className="px-6 py-3">
-            <p className="text-center text-lg font-semibold text-white drop-shadow-lg">
-              {recognizedText}
-              {currentWord && !recognizedText.endsWith(currentWord) && (
-                <span className="text-white/40"> | {currentWord}</span>
-              )}
+          <GlassPanel blur="xl" opacity="heavy" className="px-8 py-4">
+            <p className="text-center text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-yellow-300 via-yellow-100 to-yellow-400 drop-shadow-lg">
+              {textToShow}
             </p>
           </GlassPanel>
         </motion.div>
       )}
 
-      {/* Writing indicator */}
-      {isWritingRef.current && (
+      {gestureWritingRef.current && (
         <motion.div
           initial={{ scale: 0 }}
           animate={{ scale: 1 }}
           className="pointer-events-none absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2"
         >
-          <div className="h-4 w-4 animate-pulse rounded-full bg-primary-400/50 shadow-lg shadow-primary-400/30" />
+          <div className="h-5 w-5 animate-pulse rounded-full bg-yellow-400/60 shadow-lg shadow-yellow-400/40" />
         </motion.div>
       )}
 
-      {/* Bottom toolbar */}
       <AnimatePresence>
         {showUI && !showFallback && (
           <motion.div
@@ -503,7 +519,7 @@ export default function HomePage() {
               <div className="flex items-center gap-2 rounded-lg bg-white/5 px-3 py-1.5">
                 <Hand className="h-3.5 w-3.5 text-white/40" />
                 <span className="text-[10px] font-medium text-white/40">
-                  {cameraReady && modelLoaded ? 'Pinch to write' : 'Draw with touch'}
+                  {cameraReady && modelLoaded ? 'Point to write' : 'Draw with touch'}
                 </span>
               </div>
             </GlassPanel>
@@ -511,10 +527,8 @@ export default function HomePage() {
         )}
       </AnimatePresence>
 
-      {/* Header */}
       <AnimatePresence>{showUI && !showFallback && <Header />}</AnimatePresence>
 
-      {/* Status text */}
       <AnimatePresence>
         {showUI && !isCelebrating && !showFallback && (
           <motion.div
@@ -527,7 +541,7 @@ export default function HomePage() {
               <span className="text-[10px] font-medium uppercase tracking-widest text-white/20">
                 {cameraReady && modelLoaded
                   ? isTracking
-                    ? 'Pinch thumb + index finger to write'
+                    ? 'Extend index finger to write'
                     : 'Show your hand to camera'
                   : cameraReady && !modelLoaded
                     ? 'AI model loading...'
@@ -535,7 +549,7 @@ export default function HomePage() {
               </span>
               {performanceMetrics.fps > 0 && (
                 <span className="text-[10px] text-white/10">
-                  {performanceMetrics.fps} FPS | {strokes.length} strokes
+                  {performanceMetrics.fps} FPS | {drawingService.getStrokeCount()} strokes
                 </span>
               )}
             </div>
@@ -543,13 +557,8 @@ export default function HomePage() {
         )}
       </AnimatePresence>
 
-      {/* Birthday Celebration */}
       <BirthdayCelebration />
-
-      {/* Particle background */}
       <ParticleEngine active={false} count={30} />
-
-      {/* Toast notifications */}
       <ToastContainer />
     </main>
   );

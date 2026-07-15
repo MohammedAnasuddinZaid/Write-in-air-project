@@ -23,12 +23,13 @@ class DrawingService {
   }
 
   beginStroke(point: Point, config: BrushConfig): void {
+    const isGold = config.style === 'gold' || config.color === '#FFD700';
     const stroke: Stroke = {
       id: generateId(),
       points: [{ ...point, time: Date.now() }],
-      color: config.style === 'rainbow' ? '#ffffff' : config.color,
-      width: config.size * (config.pressureSensitivity && point.pressure ? 0.5 + point.pressure * 0.5 : 1),
-      opacity: config.opacity,
+      color: isGold ? '#FFD700' : config.color,
+      width: isGold ? config.size * 2 : config.size * (config.pressureSensitivity && point.pressure ? 0.5 + point.pressure * 0.5 : 1),
+      opacity: 0.95,
       smoothing: true,
       startTime: Date.now(),
     };
@@ -121,35 +122,63 @@ class DrawingService {
     return this.redoStack.length > 0;
   }
 
+  private getGoldGradient(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number): CanvasGradient {
+    const g = ctx.createLinearGradient(x, y, x + w, y + h);
+    g.addColorStop(0, '#BF953F');
+    g.addColorStop(0.25, '#FCF6B5');
+    g.addColorStop(0.5, '#B38728');
+    g.addColorStop(0.75, '#FBF5B7');
+    g.addColorStop(1, '#AA771C');
+    return g;
+  }
+
   renderStroke(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, stroke: Stroke): void {
     const points = stroke.points;
     if (points.length < 2) return;
 
     ctx.save();
-    ctx.strokeStyle = stroke.color;
-    ctx.lineWidth = stroke.width;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.globalAlpha = stroke.opacity;
+    ctx.shadowColor = '#FFD700';
+    ctx.shadowBlur = 18;
+
+    const bounds = points.length > 2 ? this.getStrokeBounds(stroke) : { x: points[0]!.x, y: points[0]!.y, width: 100, height: 100 };
+    const gradient = this.getGoldGradient(
+      ctx as CanvasRenderingContext2D,
+      bounds.x, bounds.y, bounds.width || 100, bounds.height || 100,
+    );
+    ctx.strokeStyle = gradient;
 
     if (points.length === 2) {
+      ctx.lineWidth = stroke.width * 2;
       ctx.beginPath();
       ctx.moveTo(points[0]!.x, points[0]!.y);
       ctx.lineTo(points[1]!.x, points[1]!.y);
       ctx.stroke();
     } else {
-      ctx.beginPath();
-      ctx.moveTo(points[0]!.x, points[0]!.y);
+      for (let i = 1; i < points.length; i++) {
+        const prev = points[i - 1]!;
+        const curr = points[i]!;
+        const dt = (curr.time ?? 0) - (prev.time ?? 0);
+        const dist = Math.sqrt((curr.x - prev.x) ** 2 + (curr.y - prev.y) ** 2);
+        const speed = dt > 0 ? dist / dt : 0;
+        const baseWidth = stroke.width * 2.5;
+        ctx.lineWidth = Math.max(3, Math.min(baseWidth * 1.5, baseWidth * 2 - speed * 0.05));
 
-      for (let i = 1; i < points.length - 1; i++) {
-        const xc = (points[i]!.x + points[i + 1]!.x) / 2;
-        const yc = (points[i]!.y + points[i + 1]!.y) / 2;
-        ctx.quadraticCurveTo(points[i]!.x, points[i]!.y, xc, yc);
+        ctx.beginPath();
+        ctx.moveTo(prev.x, prev.y);
+
+        if (i < points.length - 1) {
+          const next = points[i + 1]!;
+          const xc = (curr.x + next.x) / 2;
+          const yc = (curr.y + next.y) / 2;
+          ctx.quadraticCurveTo(curr.x, curr.y, xc, yc);
+        } else {
+          ctx.lineTo(curr.x, curr.y);
+        }
+        ctx.stroke();
       }
-
-      const last = points[points.length - 1]!;
-      ctx.lineTo(last.x, last.y);
-      ctx.stroke();
     }
 
     ctx.restore();

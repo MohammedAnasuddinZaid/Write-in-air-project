@@ -38,7 +38,10 @@ class GestureService {
     let gesture: GestureType = 'none';
     let confidence = 0;
 
-    if (mediapipeService.isPinchGesture(landmarks, this.config.pinchThreshold)) {
+    if (mediapipeService.isPointingGesture(landmarks)) {
+      gesture = 'pointing';
+      confidence = 0.9;
+    } else if (mediapipeService.isPinchGesture(landmarks, this.config.pinchThreshold)) {
       gesture = 'pinch';
       confidence = 0.95;
     } else if (mediapipeService.isThumbUp(landmarks)) {
