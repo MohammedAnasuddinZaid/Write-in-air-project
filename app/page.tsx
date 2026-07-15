@@ -2,7 +2,10 @@
 
 import { useEffect, useCallback, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Undo2, Redo2, Trash2, Camera, Pen, Hand, Download } from 'lucide-react';
+import {
+  Undo2, Redo2, Trash2, Camera, Pen, Hand, Download,
+  RefreshCw, AlertTriangle, CameraOff,
+} from 'lucide-react';
 import { CameraFeed } from '@/components/canvas/CameraFeed';
 import { DrawingCanvas } from '@/components/canvas/DrawingCanvas';
 import { BirthdayCelebration } from '@/components/animations/BirthdayCelebration';
@@ -31,6 +34,8 @@ import { cn } from '@/lib/utils';
 export default function HomePage() {
   const [videoReady, setVideoReady] = useState<HTMLVideoElement | null>(null);
   const [showUI, setShowUI] = useState(true);
+  const [initTimedOut, setInitTimedOut] = useState(false);
+  const [modelError, setModelError] = useState<string | null>(null);
 
   const { canvasRef, beginStroke, continueStroke, endStroke, clearCanvas, undo, redo, renderFrame } = useCanvas();
   const { processLandmarks, setupDefaultGestures } = useGesture();
@@ -40,6 +45,8 @@ export default function HomePage() {
   const modelLoaded = useAppStore((s) => s.modelLoaded);
   const isTracking = useAppStore((s) => s.isTracking);
   const isCelebrating = useAppStore((s) => s.isCelebrating);
+  const setCameraReady = useAppStore((s) => s.setCameraReady);
+  const setModelLoaded = useAppStore((s) => s.setModelLoaded);
   const setStatusMessage = useAppStore((s) => s.setStatusMessage);
   const addToast = useAppStore((s) => s.addToast);
   const setIsCelebrating = useAppStore((s) => s.setIsCelebrating);
@@ -57,10 +64,31 @@ export default function HomePage() {
   useMediaPipe({
     videoElement: videoReady,
     autoStart: true,
-    onFrame: () => {
-      // Frame processing handled by gesture detection in useGesture
-    },
+    onFrame: () => {},
+    onError: (err) => setModelError(err),
   });
+
+  // Loading timeout: if still loading after 10s, show fallback
+  useEffect(() => {
+    if (cameraReady && modelLoaded) {
+      setInitTimedOut(false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (!modelLoaded) {
+        setInitTimedOut(true);
+        setStatusMessage('Camera or AI model loading timed out');
+        addToast({
+          type: 'warning',
+          message: 'Loading timed out. Touch/mouse input still works.',
+          duration: 6000,
+        });
+      }
+    }, 10000);
+    return () => clearTimeout(timer);
+  }, [cameraReady, modelLoaded, setStatusMessage, addToast]);
+
+  const [cameraError, setCameraError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!videoReady || !cameraReady) return;
@@ -70,6 +98,23 @@ export default function HomePage() {
   const onVideoReady = useCallback((video: HTMLVideoElement) => {
     setVideoReady(video);
   }, []);
+
+  const handleCameraError = useCallback((err: string) => {
+    setCameraError(err);
+    setCameraReady(false);
+    addToast({ type: 'error', message: `Camera error: ${err}`, duration: 5000 });
+  }, [setCameraReady, addToast]);
+
+  const handleRetryCamera = useCallback(async () => {
+    setCameraError(null);
+    setCameraReady(false);
+    setModelError(null);
+    setInitTimedOut(false);
+    setStatusMessage('Restarting...');
+    mediapipeService.cleanup();
+    audioService.playClick();
+    window.location.reload();
+  }, [setCameraReady, setStatusMessage]);
 
   const handleStartWriting = useCallback(() => {
     isWritingRef.current = true;
@@ -94,17 +139,13 @@ export default function HomePage() {
   const handleUndo = useCallback(() => {
     undo();
     const removed = drawingService.undo();
-    if (removed) {
-      audioService.playClick();
-    }
+    if (removed) audioService.playClick();
   }, [undo]);
 
   const handleRedo = useCallback(() => {
     redo();
     const restored = drawingService.redo();
-    if (restored) {
-      audioService.playClick();
-    }
+    if (restored) audioService.playClick();
   }, [redo]);
 
   const handleScreenshot = useCallback(() => {
@@ -139,13 +180,9 @@ export default function HomePage() {
     return cleanup;
   }, [
     setupDefaultGestures,
-    handleStartWriting,
-    handleStopWriting,
-    handleClear,
-    handleUndo,
-    handleScreenshot,
-    handleToggleUI,
-    handleReset,
+    handleStartWriting, handleStopWriting,
+    handleClear, handleUndo, handleScreenshot,
+    handleToggleUI, handleReset,
   ]);
 
   useEffect(() => {
@@ -172,7 +209,6 @@ export default function HomePage() {
       const rect = (e.target as HTMLElement).getBoundingClientRect();
       const x = touch.clientX - rect.left;
       const y = touch.clientY - rect.top;
-
       if (x >= 0 && y >= 0 && x <= window.innerWidth && y <= window.innerHeight) {
         beginStroke({ x, y, pressure: 0.5 });
       }
@@ -187,7 +223,6 @@ export default function HomePage() {
       const rect = (e.target as HTMLElement).getBoundingClientRect();
       const x = touch.clientX - rect.left;
       const y = touch.clientY - rect.top;
-
       if (isWritingRef.current) {
         continueStroke({ x, y, pressure: 0.5 });
       }
@@ -198,6 +233,9 @@ export default function HomePage() {
   const handleTouchEnd = useCallback(() => {
     handleStopWriting();
   }, [handleStopWriting]);
+
+  const showSplash = !cameraReady || (!modelLoaded && !cameraError && !modelError && !initTimedOut);
+  const showFallback = (!cameraReady && cameraError) || initTimedOut || modelError;
 
   return (
     <main className="relative flex h-screen w-screen flex-col overflow-hidden">
@@ -211,8 +249,9 @@ export default function HomePage() {
         }}
       />
 
+      {/* Splash screen — shown during initial loading */}
       <AnimatePresence>
-        {!cameraReady && (
+        {showSplash && !showFallback && (
           <motion.div
             initial={{ opacity: 1 }}
             exit={{ opacity: 0, transition: { duration: 0.5 } }}
@@ -231,18 +270,68 @@ export default function HomePage() {
                 AirWriter AI
               </h1>
               <p className="text-sm text-white/40">Write in the air. Celebrate beautifully.</p>
-              <div className="flex items-center gap-2 text-sm text-white/30">
+              <motion.div
+                className="flex items-center gap-2 text-sm text-white/30"
+                animate={{ opacity: [0.4, 1, 0.4] }}
+                transition={{ duration: 2, repeat: Infinity }}
+              >
                 <div className="h-2 w-2 animate-pulse rounded-full bg-primary-400" />
-                Requesting camera access...
-              </div>
+                Loading AI model...
+              </motion.div>
             </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Error / Fallback screen */}
+      <AnimatePresence>
+        {showFallback && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0, transition: { duration: 0.3 } }}
+            className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[#0a0a0f]/90 backdrop-blur-sm"
+          >
+            <GlassPanel blur="xl" opacity="heavy" className="flex max-w-md flex-col items-center gap-6 px-10 py-12 text-center">
+              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-yellow-500/20">
+                <AlertTriangle className="h-8 w-8 text-yellow-400" />
+              </div>
+              <h2 className="text-xl font-bold text-white">Camera Required</h2>
+              <p className="text-sm leading-relaxed text-white/60">
+                {cameraError
+                  ? `Camera error: ${cameraError}`
+                  : modelError
+                    ? `AI model unavailable: ${modelError}`
+                    : 'Camera access or AI model loading timed out.'}
+                <br />
+                Touch and mouse drawing still works without the camera.
+              </p>
+              <div className="flex gap-3">
+                <Button variant="primary" onClick={handleRetryCamera} icon={<RefreshCw className="h-4 w-4" />}>
+                  Retry
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setCameraReady(true);
+                    setInitTimedOut(false);
+                    setModelError(null);
+                    setCameraError(null);
+                    setStatusMessage('Camera skipped — touch/mouse mode');
+                    addToast({ type: 'info', message: 'Using touch/mouse mode. Camera tracking disabled.', duration: 3000 });
+                  }}
+                >
+                  Continue Without Camera
+                </Button>
+              </div>
+            </GlassPanel>
           </motion.div>
         )}
       </AnimatePresence>
 
       {/* Camera feed */}
       <div className="absolute right-4 top-16 z-20 sm:right-6 sm:top-20">
-        <CameraFeed onVideoReady={onVideoReady} />
+        <CameraFeed onVideoReady={onVideoReady} onError={handleCameraError} />
       </div>
 
       {/* Writing area */}
@@ -278,15 +367,15 @@ export default function HomePage() {
         <motion.div
           initial={{ scale: 0 }}
           animate={{ scale: 1 }}
-          className="absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 pointer-events-none"
+          className="pointer-events-none absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2"
         >
-          <div className="h-4 w-4 rounded-full bg-primary-400/50 shadow-lg shadow-primary-400/30 animate-pulse" />
+          <div className="h-4 w-4 animate-pulse rounded-full bg-primary-400/50 shadow-lg shadow-primary-400/30" />
         </motion.div>
       )}
 
       {/* Bottom toolbar */}
       <AnimatePresence>
-        {showUI && (
+        {showUI && !showFallback && (
           <motion.div
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
@@ -295,42 +384,17 @@ export default function HomePage() {
             className="absolute bottom-6 left-1/2 z-30 -translate-x-1/2"
           >
             <GlassPanel blur="xl" opacity="heavy" className="flex items-center gap-2 px-3 py-2 sm:gap-3 sm:px-5">
-              <IconButton
-                icon={<Undo2 className="h-4 w-4" />}
-                label="Undo (Ctrl+Z)"
-                size="sm"
-                onClick={handleUndo}
-              />
-              <IconButton
-                icon={<Redo2 className="h-4 w-4" />}
-                label="Redo (Ctrl+Y)"
-                size="sm"
-                onClick={handleRedo}
-              />
+              <IconButton icon={<Undo2 className="h-4 w-4" />} label="Undo (Ctrl+Z)" size="sm" onClick={handleUndo} />
+              <IconButton icon={<Redo2 className="h-4 w-4" />} label="Redo (Ctrl+Y)" size="sm" onClick={handleRedo} />
               <div className="mx-1 h-6 w-px bg-white/10" />
-              <IconButton
-                icon={<Trash2 className="h-4 w-4" />}
-                label="Clear (Ctrl+Shift+C)"
-                size="sm"
-                onClick={handleClear}
-              />
-              <IconButton
-                icon={<Camera className="h-4 w-4" />}
-                label="Screenshot (Ctrl+S)"
-                size="sm"
-                onClick={handleScreenshot}
-              />
-              <IconButton
-                icon={<Download className="h-4 w-4" />}
-                label="Export SVG"
-                size="sm"
-                onClick={() => exportService.downloadAsSVG()}
-              />
+              <IconButton icon={<Trash2 className="h-4 w-4" />} label="Clear (Ctrl+Shift+C)" size="sm" onClick={handleClear} />
+              <IconButton icon={<Camera className="h-4 w-4" />} label="Screenshot (Ctrl+S)" size="sm" onClick={handleScreenshot} />
+              <IconButton icon={<Download className="h-4 w-4" />} label="Export SVG" size="sm" onClick={() => exportService.downloadAsSVG()} />
               <div className="mx-1 h-6 w-px bg-white/10" />
               <div className="flex items-center gap-2 rounded-lg bg-white/5 px-3 py-1.5">
                 <Hand className="h-3.5 w-3.5 text-white/40" />
                 <span className="text-[10px] font-medium text-white/40">
-                  Pinch to write
+                  {cameraReady && modelLoaded ? 'Pinch to write' : 'Draw with touch'}
                 </span>
               </div>
             </GlassPanel>
@@ -339,22 +403,26 @@ export default function HomePage() {
       </AnimatePresence>
 
       {/* Header */}
-      <AnimatePresence>
-        {showUI && <Header />}
-      </AnimatePresence>
+      <AnimatePresence>{showUI && !showFallback && <Header />}</AnimatePresence>
 
       {/* Status text */}
       <AnimatePresence>
-        {showUI && !isCelebrating && (
+        {showUI && !isCelebrating && !showFallback && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute left-4 bottom-6 z-20"
+            className="absolute bottom-6 left-4 z-20"
           >
             <div className="flex flex-col gap-1">
               <span className="text-[10px] font-medium uppercase tracking-widest text-white/20">
-                {isTracking ? 'Tracking active' : 'No hand detected'}
+                {cameraReady && modelLoaded
+                  ? isTracking
+                    ? 'Tracking active'
+                    : 'No hand detected'
+                  : cameraReady && !modelLoaded
+                    ? 'AI model loading...'
+                    : 'Initializing...'}
               </span>
               {performanceMetrics.fps > 0 && (
                 <span className="text-[10px] text-white/10">

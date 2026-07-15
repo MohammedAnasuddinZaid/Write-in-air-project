@@ -9,15 +9,19 @@ interface UseMediaPipeOptions {
   videoElement: HTMLVideoElement | null;
   autoStart?: boolean;
   onFrame?: () => void;
+  onError?: (error: string) => void;
 }
 
 export function useMediaPipe(options: UseMediaPipeOptions) {
-  const { videoElement, autoStart = true, onFrame } = options;
+  const { videoElement, autoStart = true, onFrame, onError } = options;
   const setModelLoaded = useAppStore((s) => s.setModelLoaded);
   const setIsTracking = useAppStore((s) => s.setIsTracking);
   const setStatusMessage = useAppStore((s) => s.setStatusMessage);
+  const addToast = useAppStore((s) => s.addToast);
   const onFrameRef = useRef(onFrame);
+  const onErrorRef = useRef(onError);
   onFrameRef.current = onFrame;
+  onErrorRef.current = onError;
 
   const initialize = useCallback(async () => {
     try {
@@ -35,10 +39,27 @@ export function useMediaPipe(options: UseMediaPipeOptions) {
       }
       logger.info('MediaPipe initialized');
     } catch (error) {
-      setStatusMessage('AI model failed to load');
+      const message = error instanceof Error ? error.message : 'AI model failed to load';
+      setStatusMessage(message);
+      setModelLoaded(false);
       logger.error('MediaPipe initialization failed', error);
+      onErrorRef.current?.(message);
+      addToast({
+        type: 'warning',
+        message: 'Hand tracking unavailable. Touch/mouse drawing still works.',
+        duration: 5000,
+      });
     }
-  }, [videoElement, setModelLoaded, setIsTracking, setStatusMessage]);
+  }, [videoElement, setModelLoaded, setIsTracking, setStatusMessage, addToast]);
+
+  const retry = useCallback(async () => {
+    mediapipeService.cleanup();
+    setModelLoaded(false);
+    setIsTracking(false);
+    setStatusMessage('Retrying AI model...');
+    await new Promise((r) => setTimeout(r, 500));
+    return initialize();
+  }, [initialize, setModelLoaded, setIsTracking, setStatusMessage]);
 
   useEffect(() => {
     if (autoStart && videoElement) {
@@ -55,5 +76,5 @@ export function useMediaPipe(options: UseMediaPipeOptions) {
     setIsTracking(false);
   }, [setModelLoaded, setIsTracking]);
 
-  return { initialize, cleanup };
+  return { initialize, cleanup, retry };
 }

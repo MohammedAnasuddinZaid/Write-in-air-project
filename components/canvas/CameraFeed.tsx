@@ -10,10 +10,11 @@ import { cn } from '@/lib/utils';
 interface CameraFeedProps {
   className?: string;
   onVideoReady?: (video: HTMLVideoElement) => void;
+  onError?: (error: string) => void;
 }
 
-export function CameraFeed({ className, onVideoReady }: CameraFeedProps) {
-  const { videoRef } = useCamera();
+export function CameraFeed({ className, onVideoReady, onError }: CameraFeedProps) {
+  const { videoRef } = useCamera({ onError });
   const cameraReady = useAppStore((s) => s.cameraReady);
   const localVideoRef = useRef<HTMLVideoElement>(null);
 

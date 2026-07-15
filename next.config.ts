@@ -37,11 +37,11 @@ const nextConfig: NextConfig = {
           key: 'Content-Security-Policy',
           value: [
             "default-src 'self'",
-            "script-src 'self' 'unsafe-wasm-eval' 'unsafe-eval' blob:",
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https://cdn.jsdelivr.net https://storage.googleapis.com",
             "style-src 'self' 'unsafe-inline'",
             "img-src 'self' blob: data:",
             "media-src 'self' blob:",
-            "connect-src 'self' blob: https://*.googleapis.com wss:",
+            "connect-src 'self' blob: https://*.googleapis.com https://cdn.jsdelivr.net https://storage.googleapis.com wss:",
             "font-src 'self' data:",
             "worker-src 'self' blob:",
             "frame-src 'none'",
