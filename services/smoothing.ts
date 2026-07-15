@@ -3,8 +3,8 @@ class OneEuroFilter {
   private prevY = 0;
   private prevTime = 0;
   private lastSpeed = 0;
-  private minCutoff = 0.3;
-  private beta = 0.4;
+  private minCutoff = 1.0;
+  private beta = 0.2;
 
   reset(): void {
     this.prevX = 0;

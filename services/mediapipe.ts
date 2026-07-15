@@ -141,46 +141,12 @@ class MediaPipeService {
     }
   }
 
-  getHandCenter(landmarks: HandLandmarks): { x: number; y: number } | null {
-    const indices = [0, 5, 9, 13, 17];
-    let cx = 0, cy = 0, count = 0;
-    for (const i of indices) {
-      const p = landmarks.landmarks[i];
-      if (p) { cx += p.x; cy += p.y; count++; }
-    }
-    if (count === 0) return null;
-    return { x: cx / count, y: cy / count };
-  }
-
-  getStabilizedFingerPosition(
-    landmarks: HandLandmarks,
-    mirror: boolean = true,
-  ): { x: number; y: number; pressure: number } | null {
-    const tip = landmarks.landmarks[FINGER_TIP_INDEX];
-    const center = this.getHandCenter(landmarks);
-    if (!tip || !center) return null;
-
-    let rx = tip.x - center.x;
-    let ry = tip.y - center.y;
-    if (mirror) rx = -rx;
-
-    const sw = typeof window !== 'undefined' ? window.innerWidth : 800;
-    const sh = typeof window !== 'undefined' ? window.innerHeight : 600;
-
-    return {
-      x: sw / 2 + rx * sw,
-      y: sh / 2 + ry * sh,
-      pressure: tip.z ? Math.max(0, 1 - Math.abs(tip.z)) : 0.5,
-    };
-  }
-
   getFingerTipPosition(
     landmarks: HandLandmarks,
     mirror: boolean = true,
   ): Point | null {
     const tip = landmarks.landmarks[FINGER_TIP_INDEX];
     if (!tip) return null;
-
     return {
       x: mirror ? 1 - tip.x : tip.x,
       y: tip.y,
@@ -218,35 +184,28 @@ class MediaPipeService {
     return dist < threshold;
   }
 
-  private dist3d(a: { x: number; y: number; z?: number }, b: { x: number; y: number; z?: number }): number {
-    return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + ((a.z ?? 0) - (b.z ?? 0)) ** 2);
-  }
-
   isPointingGesture(landmarks: HandLandmarks): boolean {
     const wrist = landmarks.landmarks[0];
-    const indexTip = landmarks.landmarks[8];
-    const indexMcp = landmarks.landmarks[5];
-    const midTip = landmarks.landmarks[12];
-    const midMcp = landmarks.landmarks[9];
-    const ringTip = landmarks.landmarks[16];
-    const ringMcp = landmarks.landmarks[13];
-    const pinkyTip = landmarks.landmarks[20];
-    const pinkyMcp = landmarks.landmarks[17];
-    const thumbTip = landmarks.landmarks[4];
-    const thumbMcp = landmarks.landmarks[2];
+    const iTip = landmarks.landmarks[8];
+    const iMcp = landmarks.landmarks[5];
+    const mTip = landmarks.landmarks[12];
+    const mMcp = landmarks.landmarks[9];
+    const rTip = landmarks.landmarks[16];
+    const rMcp = landmarks.landmarks[13];
+    const pTip = landmarks.landmarks[20];
+    const pMcp = landmarks.landmarks[17];
+    const tTip = landmarks.landmarks[4];
+    const tMcp = landmarks.landmarks[2];
 
-    if (!wrist || !indexTip || !indexMcp || !midTip || !midMcp) return false;
+    if (!wrist || !iTip || !iMcp || !mTip || !mMcp) return false;
 
-    const handSize = this.dist3d(wrist, midMcp);
-    if (handSize < 0.01) return false;
+    const indexForward = (iTip.z ?? 0) < (iMcp.z ?? 0) - 0.03;
+    const middleBack = !mTip || !mMcp || (mTip.z ?? 0) > (mMcp.z ?? 0) - 0.01;
+    const ringBack = !rTip || !rMcp || (rTip.z ?? 0) > (rMcp.z ?? 0) - 0.01;
+    const pinkyBack = !pTip || !pMcp || (pTip.z ?? 0) > (pMcp.z ?? 0) - 0.01;
+    const thumbBack = !tTip || !tMcp || (tTip.z ?? 0) > (tMcp.z ?? 0) - 0.01;
 
-    const indexExtended = this.dist3d(indexTip, indexMcp) > 0.3 * handSize;
-    const middleCurled = !midTip || !midMcp || this.dist3d(midTip, midMcp) < 0.2 * handSize;
-    const ringCurled = !ringTip || !ringMcp || this.dist3d(ringTip, ringMcp) < 0.2 * handSize;
-    const pinkyCurled = !pinkyTip || !pinkyMcp || this.dist3d(pinkyTip, pinkyMcp) < 0.2 * handSize;
-    const thumbCurled = !thumbTip || !thumbMcp || this.dist3d(thumbTip, thumbMcp) < 0.25 * handSize;
-
-    return indexExtended && middleCurled && ringCurled && pinkyCurled && thumbCurled;
+    return indexForward && middleBack && ringBack && pinkyBack && thumbBack;
   }
 
   isOpenPalm(landmarks: HandLandmarks): boolean {
