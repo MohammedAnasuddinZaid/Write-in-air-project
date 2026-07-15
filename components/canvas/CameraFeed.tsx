@@ -30,7 +30,7 @@ export function CameraFeed({ className, onVideoReady, onError }: CameraFeedProps
       animate={{ opacity: 1, scale: 1 }}
       className={cn(
         'relative overflow-hidden rounded-2xl border border-white/20 bg-black/40 backdrop-blur-sm shadow-2xl',
-        'w-full max-w-[320px] aspect-[4/3]',
+        'w-full max-w-[320px] md:max-w-[480px] aspect-[4/3]',
         className,
       )}
     >

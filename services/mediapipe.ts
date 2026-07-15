@@ -185,10 +185,14 @@ class MediaPipeService {
     return dist < threshold;
   }
 
+  private dist(a: { x: number; y: number }, b: { x: number; y: number }): number {
+    return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
+  }
+
   isPointingGesture(landmarks: HandLandmarks): boolean {
-    const tip = landmarks.landmarks[8];
-    const pip = landmarks.landmarks[6];
-    const mcp = landmarks.landmarks[5];
+    const wrist = landmarks.landmarks[0];
+    const indexTip = landmarks.landmarks[8];
+    const indexMcp = landmarks.landmarks[5];
     const midTip = landmarks.landmarks[12];
     const midMcp = landmarks.landmarks[9];
     const ringTip = landmarks.landmarks[16];
@@ -196,14 +200,18 @@ class MediaPipeService {
     const pinkyTip = landmarks.landmarks[20];
     const pinkyMcp = landmarks.landmarks[17];
     const thumbTip = landmarks.landmarks[4];
-    const thumbIp = landmarks.landmarks[3];
-    if (!tip || !pip || !mcp || !midTip || !midMcp) return false;
+    const thumbMcp = landmarks.landmarks[2];
 
-    const indexExtended = tip.y < pip.y && pip.y < mcp.y;
-    const middleCurled = midTip.y > midMcp.y + 0.05;
-    const ringCurled = !ringTip || !ringMcp || ringTip.y > ringMcp.y + 0.05;
-    const pinkyCurled = !pinkyTip || !pinkyMcp || pinkyTip.y > pinkyMcp.y + 0.05;
-    const thumbCurled = !thumbTip || !thumbIp || thumbTip.y > thumbIp.y;
+    if (!wrist || !indexTip || !indexMcp || !midTip || !midMcp) return false;
+
+    const handSize = this.dist(wrist, midMcp);
+    if (handSize < 0.01) return false;
+
+    const indexExtended = this.dist(indexTip, indexMcp) > 0.35 * handSize;
+    const middleCurled = !midTip || !midMcp || this.dist(midTip, midMcp) < 0.25 * handSize;
+    const ringCurled = !ringTip || !ringMcp || this.dist(ringTip, ringMcp) < 0.25 * handSize;
+    const pinkyCurled = !pinkyTip || !pinkyMcp || this.dist(pinkyTip, pinkyMcp) < 0.25 * handSize;
+    const thumbCurled = !thumbTip || !thumbMcp || this.dist(thumbTip, thumbMcp) < 0.3 * handSize;
 
     return indexExtended && middleCurled && ringCurled && pinkyCurled && thumbCurled;
   }
