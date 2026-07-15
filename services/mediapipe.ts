@@ -25,6 +25,7 @@ class MediaPipeService {
   private isLoaded = false;
 
   async initialize(): Promise<void> {
+    if (this.isLoaded && this.handLandmarker) return;
     try {
       const vision = await FilesetResolver.forVisionTasks(
         'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm',
@@ -125,9 +126,19 @@ class MediaPipeService {
       }
     } catch (error) {
       logger.warn('Detection frame error', error);
+      if (video.paused || video.ended || video.readyState < 2 || !video.srcObject) {
+        this.isRunning = false;
+        if (this.animationFrameId !== null) {
+          cancelAnimationFrame(this.animationFrameId);
+          this.animationFrameId = null;
+        }
+        return;
+      }
     }
 
-    this.animationFrameId = requestAnimationFrame(() => this.detectLoop());
+    if (this.isRunning) {
+      this.animationFrameId = requestAnimationFrame(() => this.detectLoop());
+    }
   }
 
   getFingerTipPosition(

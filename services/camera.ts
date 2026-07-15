@@ -130,27 +130,31 @@ class CameraService {
   }
 
   cleanup(): void {
+    this.isActive = false;
     if (this.stream) {
-      this.stream.getTracks().forEach((track) => track.stop());
+      try {
+        this.stream.getTracks().forEach((track) => {
+          try { track.stop(); } catch { /* track already stopped */ }
+        });
+      } catch { /* ignore cleanup errors */ }
       this.stream = null;
     }
     if (this.videoElement) {
-      this.videoElement.srcObject = null;
+      try { this.videoElement.srcObject = null; } catch { /* ignore */ }
     }
-    this.isActive = false;
     logger.info('Camera cleaned up');
   }
 
   private applyMirror(): void {
-    if (this.videoElement) {
+    if (this.videoElement && this.isActive) {
       this.videoElement.style.transform = this.config.mirror ? 'scaleX(-1)' : 'scaleX(1)';
     }
   }
 
   private configureAutoExposure(): void {
-    if (!this.stream) return;
+    if (!this.stream || !this.isActive) return;
     const track = this.stream.getVideoTracks()[0];
-    if (!track) return;
+    if (!track || track.readyState !== 'live') return;
     try {
       const capabilities = track.getCapabilities() as Record<string, unknown>;
       const exposureModes = capabilities?.exposureMode as string[] | undefined;
