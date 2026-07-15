@@ -38,17 +38,9 @@ class DrawingService {
 
   continueStroke(point: Point, config: BrushConfig): void {
     if (!this.currentStroke) return;
-    const last = this.currentStroke.points[this.currentStroke.points.length - 1];
-    if (!last) return;
-
-    const dist = distance(last, point);
-    if (dist < 0.5) return;
-
     this.currentStroke.points.push({ ...point, time: Date.now() });
-
     if (config.pressureSensitivity && point.pressure) {
-      this.currentStroke.width =
-        config.size * (0.3 + point.pressure * 0.7);
+      this.currentStroke.width = config.size * (0.3 + point.pressure * 0.7);
     }
   }
 
@@ -132,6 +124,36 @@ class DrawingService {
     return g;
   }
 
+  private renderCatmullRomSegment(
+    ctx: CanvasRenderingContext2D,
+    p0: Point, p1: Point, p2: Point, p3: Point,
+    lineWidth: number,
+  ): void {
+    const steps = 10;
+    ctx.lineWidth = lineWidth;
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y);
+    for (let s = 1; s <= steps; s++) {
+      const t = s / steps;
+      const tt = t * t;
+      const ttt = tt * t;
+      const x = 0.5 * (
+        (2 * p1.x) +
+        (-p0.x + p2.x) * t +
+        (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * tt +
+        (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * ttt
+      );
+      const y = 0.5 * (
+        (2 * p1.y) +
+        (-p0.y + p2.y) * t +
+        (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * tt +
+        (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * ttt
+      );
+      ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
   renderStroke(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, stroke: Stroke): void {
     const points = stroke.points;
     if (points.length < 2) return;
@@ -150,35 +172,24 @@ class DrawingService {
     );
     ctx.strokeStyle = gradient;
 
-    if (points.length === 2) {
-      ctx.lineWidth = stroke.width * 2;
-      ctx.beginPath();
-      ctx.moveTo(points[0]!.x, points[0]!.y);
-      ctx.lineTo(points[1]!.x, points[1]!.y);
-      ctx.stroke();
-    } else {
-      for (let i = 1; i < points.length; i++) {
-        const prev = points[i - 1]!;
-        const curr = points[i]!;
-        const dt = (curr.time ?? 0) - (prev.time ?? 0);
-        const dist = Math.sqrt((curr.x - prev.x) ** 2 + (curr.y - prev.y) ** 2);
-        const speed = dt > 0 ? dist / dt : 0;
-        const baseWidth = stroke.width * 2.5;
-        ctx.lineWidth = Math.max(3, Math.min(baseWidth * 1.5, baseWidth * 2 - speed * 0.05));
+    const baseWidth = stroke.width * 2.5;
 
-        ctx.beginPath();
-        ctx.moveTo(prev.x, prev.y);
+    for (let i = 0; i < points.length - 1; i++) {
+      const curr = points[i]!;
+      const next = points[i + 1]!;
+      const prev = points[Math.max(0, i - 1)]!;
+      const next2 = points[Math.min(points.length - 1, i + 2)]!;
 
-        if (i < points.length - 1) {
-          const next = points[i + 1]!;
-          const xc = (curr.x + next.x) / 2;
-          const yc = (curr.y + next.y) / 2;
-          ctx.quadraticCurveTo(curr.x, curr.y, xc, yc);
-        } else {
-          ctx.lineTo(curr.x, curr.y);
-        }
-        ctx.stroke();
-      }
+      const dt = (next.time ?? curr.time ?? 0) - (curr.time ?? 0);
+      const dist = Math.sqrt((next.x - curr.x) ** 2 + (next.y - curr.y) ** 2);
+      const speed = dt > 0 ? dist / dt : 0;
+      ctx.lineWidth = Math.max(3, Math.min(baseWidth * 1.5, baseWidth * 2 - speed * 0.05));
+
+      this.renderCatmullRomSegment(
+        ctx as CanvasRenderingContext2D,
+        prev, curr, next, next2,
+        ctx.lineWidth,
+      );
     }
 
     ctx.restore();
@@ -285,12 +296,7 @@ class DrawingService {
   private simplifyStroke(stroke: Stroke): Stroke {
     const points = stroke.points;
     if (points.length <= 2) return { ...stroke, points: [...points] };
-
-    const simplified = this.douglasPeucker(
-      points,
-      STROKE_SIMPLIFICATION_TOLERANCE,
-    );
-
+    const simplified = this.douglasPeucker(points, STROKE_SIMPLIFICATION_TOLERANCE);
     return {
       ...stroke,
       points: simplified.length >= 2 ? simplified : [points[0]!, points[points.length - 1]!],
@@ -299,12 +305,10 @@ class DrawingService {
 
   private douglasPeucker(points: Point[], tolerance: number): Point[] {
     if (points.length <= 2) return [...points];
-
     let maxDist = 0;
     let maxIndex = 0;
     const first = points[0]!;
     const last = points[points.length - 1]!;
-
     for (let i = 1; i < points.length - 1; i++) {
       const dist = this.perpendicularDistance(points[i]!, first, last);
       if (dist > maxDist) {
@@ -312,13 +316,11 @@ class DrawingService {
         maxIndex = i;
       }
     }
-
     if (maxDist > tolerance) {
       const left = this.douglasPeucker(points.slice(0, maxIndex + 1), tolerance);
       const right = this.douglasPeucker(points.slice(maxIndex), tolerance);
       return [...left.slice(0, -1), ...right];
     }
-
     return [first, last];
   }
 
@@ -327,10 +329,7 @@ class DrawingService {
     const dy = lineEnd.y - lineStart.y;
     const length = Math.sqrt(dx * dx + dy * dy);
     if (length === 0) return distance(point, lineStart);
-
-    const num = Math.abs(
-      dy * point.x - dx * point.y + lineEnd.x * lineStart.y - lineEnd.y * lineStart.x,
-    );
+    const num = Math.abs(dy * point.x - dx * point.y + lineEnd.x * lineStart.y - lineEnd.y * lineStart.x);
     return num / length;
   }
 }

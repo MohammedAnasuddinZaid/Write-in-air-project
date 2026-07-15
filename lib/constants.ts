@@ -6,7 +6,7 @@ export const FPS_TARGET = 60;
 export const FPS_MINIMUM = 30;
 export const FRAME_TIME_TARGET = 1000 / FPS_TARGET;
 
-export const CAMERA_DEFAULT_RESOLUTION = { width: 640, height: 480 };
+export const CAMERA_DEFAULT_RESOLUTION = { width: 1280, height: 720 };
 export const CAMERA_MIN_RESOLUTION = { width: 320, height: 240 };
 export const CAMERA_MAX_RESOLUTION = { width: 3840, height: 2160 };
 export const CAMERA_DEFAULT_FPS = 30;

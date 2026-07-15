@@ -292,6 +292,28 @@ function dtwDistance(input: Point[], template: Point[]): number {
   return cost[m - 1]![n - 1]! / Math.max(m, n);
 }
 
+function smoothPoints(points: Point[], windowSize: number): Point[] {
+  if (points.length < windowSize) return [...points];
+  const half = Math.floor(windowSize / 2);
+  const result: Point[] = [];
+  for (let i = 0; i < points.length; i++) {
+    let sx = 0, sy = 0, c = 0;
+    const start = Math.max(0, i - half);
+    const end = Math.min(points.length - 1, i + half);
+    for (let j = start; j <= end; j++) {
+      const p = points[j];
+      if (p && !(p.x === -10 && p.y === -10)) {
+        sx += p.x;
+        sy += p.y;
+        c++;
+      }
+    }
+    const p = points[i]!;
+    result.push(c > 0 ? { x: sx / c, y: sy / c } : { x: p.x, y: p.y });
+  }
+  return result;
+}
+
 class LetterRecognizer {
   recognizeFromStroke(inputPoints: Point[]): string {
     if (inputPoints.length < 3) return '';
@@ -299,7 +321,8 @@ class LetterRecognizer {
     const filtered = inputPoints.filter((p) => p.x !== -10 && p.y !== -10);
     if (filtered.length < 3) return '';
 
-    const normalized = normalizePoints(filtered);
+    const smoothed = smoothPoints(filtered, 7);
+    const normalized = normalizePoints(smoothed);
     const resampled = resampleStroke(normalized, 40);
 
     let bestLetter = '';
@@ -319,7 +342,7 @@ class LetterRecognizer {
       }
     }
 
-    if (bestScore > 0.8) return '';
+    if (bestScore > 1.2) return '';
     return bestLetter;
   }
 }
