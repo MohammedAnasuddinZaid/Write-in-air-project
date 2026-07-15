@@ -197,17 +197,15 @@ export default function HomePage() {
       const pointing = mediapipeService.isPointingGesture(landmarks);
       const pinching = mediapipeService.isPinchGesture(landmarks);
       const shouldWrite = pointing || pinching;
-      const tip = mediapipeService.getFingerTipPosition(landmarks, true);
-      if (!tip) {
+      const stp = mediapipeService.getStabilizedFingerPosition(landmarks, true);
+      if (!stp) {
         endWritingSession();
         fingerPosRef.current = null;
         return;
       }
 
-      const rawX = tip.x * window.innerWidth;
-      const rawY = tip.y * window.innerHeight;
-      const smoothed = smoothingFilter.smooth(rawX, rawY);
-      const sp: Point = { x: smoothed.x, y: smoothed.y, pressure: tip.pressure ?? 0.5, time: Date.now() };
+      const smoothed = smoothingFilter.smooth(stp.x, stp.y);
+      const sp: Point = { x: smoothed.x, y: smoothed.y, pressure: stp.pressure ?? 0.5, time: Date.now() };
 
       fingerPosRef.current = sp;
 

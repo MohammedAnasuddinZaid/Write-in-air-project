@@ -141,6 +141,39 @@ class MediaPipeService {
     }
   }
 
+  getHandCenter(landmarks: HandLandmarks): { x: number; y: number } | null {
+    const indices = [0, 5, 9, 13, 17];
+    let cx = 0, cy = 0, count = 0;
+    for (const i of indices) {
+      const p = landmarks.landmarks[i];
+      if (p) { cx += p.x; cy += p.y; count++; }
+    }
+    if (count === 0) return null;
+    return { x: cx / count, y: cy / count };
+  }
+
+  getStabilizedFingerPosition(
+    landmarks: HandLandmarks,
+    mirror: boolean = true,
+  ): { x: number; y: number; pressure: number } | null {
+    const tip = landmarks.landmarks[FINGER_TIP_INDEX];
+    const center = this.getHandCenter(landmarks);
+    if (!tip || !center) return null;
+
+    let rx = tip.x - center.x;
+    let ry = tip.y - center.y;
+    if (mirror) rx = -rx;
+
+    const sw = typeof window !== 'undefined' ? window.innerWidth : 800;
+    const sh = typeof window !== 'undefined' ? window.innerHeight : 600;
+
+    return {
+      x: sw / 2 + rx * sw,
+      y: sh / 2 + ry * sh,
+      pressure: tip.z ? Math.max(0, 1 - Math.abs(tip.z)) : 0.5,
+    };
+  }
+
   getFingerTipPosition(
     landmarks: HandLandmarks,
     mirror: boolean = true,

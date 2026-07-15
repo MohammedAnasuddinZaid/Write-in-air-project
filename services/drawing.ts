@@ -124,36 +124,6 @@ class DrawingService {
     return g;
   }
 
-  private renderCatmullRomSegment(
-    ctx: CanvasRenderingContext2D,
-    p0: Point, p1: Point, p2: Point, p3: Point,
-    lineWidth: number,
-  ): void {
-    const steps = 10;
-    ctx.lineWidth = lineWidth;
-    ctx.beginPath();
-    ctx.moveTo(p1.x, p1.y);
-    for (let s = 1; s <= steps; s++) {
-      const t = s / steps;
-      const tt = t * t;
-      const ttt = tt * t;
-      const x = 0.5 * (
-        (2 * p1.x) +
-        (-p0.x + p2.x) * t +
-        (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * tt +
-        (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * ttt
-      );
-      const y = 0.5 * (
-        (2 * p1.y) +
-        (-p0.y + p2.y) * t +
-        (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * tt +
-        (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * ttt
-      );
-      ctx.lineTo(x, y);
-    }
-    ctx.stroke();
-  }
-
   renderStroke(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, stroke: Stroke): void {
     const points = stroke.points;
     if (points.length < 2) return;
@@ -163,7 +133,7 @@ class DrawingService {
     ctx.lineJoin = 'round';
     ctx.globalAlpha = stroke.opacity;
     ctx.shadowColor = '#FFD700';
-    ctx.shadowBlur = 18;
+    ctx.shadowBlur = 22;
 
     const bounds = points.length > 2 ? this.getStrokeBounds(stroke) : { x: points[0]!.x, y: points[0]!.y, width: 100, height: 100 };
     const gradient = this.getGoldGradient(
@@ -171,27 +141,29 @@ class DrawingService {
       bounds.x, bounds.y, bounds.width || 100, bounds.height || 100,
     );
     ctx.strokeStyle = gradient;
+    ctx.lineWidth = stroke.width * 2.75;
 
-    const baseWidth = stroke.width * 2.5;
+    ctx.beginPath();
+    ctx.moveTo(points[0]!.x, points[0]!.y);
 
     for (let i = 0; i < points.length - 1; i++) {
-      const curr = points[i]!;
-      const next = points[i + 1]!;
-      const prev = points[Math.max(0, i - 1)]!;
-      const next2 = points[Math.min(points.length - 1, i + 2)]!;
+      const p0 = points[Math.max(0, i - 1)]!;
+      const p1 = points[i]!;
+      const p2 = points[i + 1]!;
+      const p3 = points[Math.min(points.length - 1, i + 2)]!;
 
-      const dt = (next.time ?? curr.time ?? 0) - (curr.time ?? 0);
-      const dist = Math.sqrt((next.x - curr.x) ** 2 + (next.y - curr.y) ** 2);
-      const speed = dt > 0 ? dist / dt : 0;
-      ctx.lineWidth = Math.max(3, Math.min(baseWidth * 1.5, baseWidth * 2 - speed * 0.05));
-
-      this.renderCatmullRomSegment(
-        ctx as CanvasRenderingContext2D,
-        prev, curr, next, next2,
-        ctx.lineWidth,
-      );
+      for (let s = 1; s <= 10; s++) {
+        const t = s / 10;
+        const tt = t * t;
+        const ttt = tt * t;
+        ctx.lineTo(
+          0.5 * ((2 * p1.x) + (-p0.x + p2.x) * t + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * tt + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * ttt),
+          0.5 * ((2 * p1.y) + (-p0.y + p2.y) * t + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * tt + (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * ttt),
+        );
+      }
     }
 
+    ctx.stroke();
     ctx.restore();
   }
 
