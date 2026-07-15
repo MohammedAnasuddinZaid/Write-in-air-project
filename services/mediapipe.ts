@@ -185,8 +185,8 @@ class MediaPipeService {
     return dist < threshold;
   }
 
-  private dist(a: { x: number; y: number }, b: { x: number; y: number }): number {
-    return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
+  private dist3d(a: { x: number; y: number; z?: number }, b: { x: number; y: number; z?: number }): number {
+    return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + ((a.z ?? 0) - (b.z ?? 0)) ** 2);
   }
 
   isPointingGesture(landmarks: HandLandmarks): boolean {
@@ -204,14 +204,14 @@ class MediaPipeService {
 
     if (!wrist || !indexTip || !indexMcp || !midTip || !midMcp) return false;
 
-    const handSize = this.dist(wrist, midMcp);
+    const handSize = this.dist3d(wrist, midMcp);
     if (handSize < 0.01) return false;
 
-    const indexExtended = this.dist(indexTip, indexMcp) > 0.35 * handSize;
-    const middleCurled = !midTip || !midMcp || this.dist(midTip, midMcp) < 0.25 * handSize;
-    const ringCurled = !ringTip || !ringMcp || this.dist(ringTip, ringMcp) < 0.25 * handSize;
-    const pinkyCurled = !pinkyTip || !pinkyMcp || this.dist(pinkyTip, pinkyMcp) < 0.25 * handSize;
-    const thumbCurled = !thumbTip || !thumbMcp || this.dist(thumbTip, thumbMcp) < 0.3 * handSize;
+    const indexExtended = this.dist3d(indexTip, indexMcp) > 0.3 * handSize;
+    const middleCurled = !midTip || !midMcp || this.dist3d(midTip, midMcp) < 0.2 * handSize;
+    const ringCurled = !ringTip || !ringMcp || this.dist3d(ringTip, ringMcp) < 0.2 * handSize;
+    const pinkyCurled = !pinkyTip || !pinkyMcp || this.dist3d(pinkyTip, pinkyMcp) < 0.2 * handSize;
+    const thumbCurled = !thumbTip || !thumbMcp || this.dist3d(thumbTip, thumbMcp) < 0.25 * handSize;
 
     return indexExtended && middleCurled && ringCurled && pinkyCurled && thumbCurled;
   }

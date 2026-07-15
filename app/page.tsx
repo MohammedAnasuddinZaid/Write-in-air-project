@@ -166,6 +166,8 @@ export default function HomePage() {
       }
 
       const pointing = mediapipeService.isPointingGesture(landmarks);
+      const pinching = mediapipeService.isPinchGesture(landmarks);
+      const shouldWrite = pointing || pinching;
       const tip = mediapipeService.getFingerTipPosition(landmarks, true);
       if (!tip) {
         if (gestureWritingRef.current) {
@@ -186,7 +188,7 @@ export default function HomePage() {
 
       fingerPosRef.current = sp;
 
-      if (pointing) {
+      if (shouldWrite) {
         currentStrokeRef.current.push(sp);
         if (!gestureWritingRef.current) {
           canvasActionsRef.current.beginStroke(sp, { style: 'gold', color: '#FFD700', size: 4, opacity: 0.95, glow: 0.8, pressureSensitivity: true });
@@ -519,7 +521,7 @@ export default function HomePage() {
               <div className="flex items-center gap-2 rounded-lg bg-white/5 px-3 py-1.5">
                 <Hand className="h-3.5 w-3.5 text-white/40" />
                 <span className="text-[10px] font-medium text-white/40">
-                  {cameraReady && modelLoaded ? 'Point to write' : 'Draw with touch'}
+                  {cameraReady && modelLoaded ? 'Pinch or point to write' : 'Draw with touch'}
                 </span>
               </div>
             </GlassPanel>
@@ -541,7 +543,7 @@ export default function HomePage() {
               <span className="text-[10px] font-medium uppercase tracking-widest text-white/20">
                 {cameraReady && modelLoaded
                   ? isTracking
-                    ? 'Extend index finger to write'
+                    ? 'Pinch or point index finger to write'
                     : 'Show your hand to camera'
                   : cameraReady && !modelLoaded
                     ? 'AI model loading...'
