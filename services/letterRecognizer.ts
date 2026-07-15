@@ -319,7 +319,7 @@ class LetterRecognizer {
       }
     }
 
-    if (bestScore > 1.0) return '';
+    if (bestScore > 0.8) return '';
     return bestLetter;
   }
 }

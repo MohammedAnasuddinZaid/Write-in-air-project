@@ -2,7 +2,7 @@
 
 import { useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Camera, CameraOff } from 'lucide-react';
+import { CameraOff } from 'lucide-react';
 import { useCamera } from '@/hooks/useCamera';
 import { useAppStore } from '@/stores/useAppStore';
 import { cn } from '@/lib/utils';
@@ -11,9 +11,10 @@ interface CameraFeedProps {
   className?: string;
   onVideoReady?: (video: HTMLVideoElement) => void;
   onError?: (error: string) => void;
+  fullscreen?: boolean;
 }
 
-export function CameraFeed({ className, onVideoReady, onError }: CameraFeedProps) {
+export function CameraFeed({ className, onVideoReady, onError, fullscreen }: CameraFeedProps) {
   const { videoRef } = useCamera({ onError });
   const cameraReady = useAppStore((s) => s.cameraReady);
   const localVideoRef = useRef<HTMLVideoElement>(null);
@@ -23,6 +24,32 @@ export function CameraFeed({ className, onVideoReady, onError }: CameraFeedProps
       onVideoReady?.(localVideoRef.current);
     }
   }, [cameraReady, onVideoReady]);
+
+  if (fullscreen) {
+    return (
+      <div className="fixed inset-0 z-0 bg-black">
+        <video
+          ref={(el) => {
+            (videoRef as React.MutableRefObject<HTMLVideoElement | null>).current = el;
+            (localVideoRef as React.MutableRefObject<HTMLVideoElement | null>).current = el;
+          }}
+          autoPlay
+          playsInline
+          muted
+          className={cn(
+            'h-full w-full object-cover',
+            'scale-x-[-1]',
+            !cameraReady && 'hidden',
+          )}
+        />
+        {!cameraReady && (
+          <div className="absolute inset-0 flex items-center justify-center text-white/50">
+            <CameraOff className="h-10 w-10" />
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <motion.div
@@ -66,12 +93,6 @@ export function CameraFeed({ className, onVideoReady, onError }: CameraFeedProps
         <span className="text-xs font-medium text-white/60">
           {cameraReady ? 'Camera Active' : 'Offline'}
         </span>
-      </div>
-
-      <div className="absolute top-3 right-3">
-        <div className="flex items-center gap-1.5 rounded-full bg-black/40 px-2.5 py-1 backdrop-blur-sm">
-          <Camera className="h-3 w-3 text-white/60" />
-        </div>
       </div>
     </motion.div>
   );
