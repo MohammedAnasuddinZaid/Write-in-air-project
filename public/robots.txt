@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://airwriter-ai.vercel.app/sitemap.xml
